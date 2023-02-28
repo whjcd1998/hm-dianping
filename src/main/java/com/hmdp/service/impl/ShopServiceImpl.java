@@ -9,6 +9,7 @@ import com.hmdp.entity.Shop;
 import com.hmdp.mapper.ShopMapper;
 import com.hmdp.service.IShopService;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.hmdp.utils.CacheClient;
 import com.hmdp.utils.RedisData;
 import lombok.extern.slf4j.Slf4j;
 import lombok.val;
@@ -40,6 +41,9 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
     @Resource
     private StringRedisTemplate stringRedisTemplate;
 
+    @Resource
+    private CacheClient cacheClient;
+
     //Java线程池
     private static final ExecutorService CACHE_REBUILD_EXECUTOR = Executors.newFixedThreadPool(10);
 
@@ -68,17 +72,16 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
      */
     @Override
     public Result queryById(Long id) {
-        //缓存穿透
-        //Shop shop = queryWithPassThrough(id);
+        // 缓存穿透
+        Shop shop = cacheClient.queryWithPassThrough(CACHE_SHOP_KEY, id, Shop.class, this::getById,
+                CACHE_SHOP_TTL, TimeUnit.MINUTES);
 
-        //互斥锁防止缓存击穿
-//        Shop shop = queryWithMutex(id);
-//        if (shop == null) {
-//            return Result.fail("店铺不存在");
-//        }
-
-        //逻辑过期防止缓存击穿
-        Shop shop = queryWithLogicalExpire(id);
+        // 互斥锁
+//        Shop shop = cacheClient.queryWithMutex(CACHE_SHOP_KEY, id, Shop.class, this::getById,
+//                CACHE_SHOP_TTL, TimeUnit.MINUTES);
+        // 逻辑过期
+//        Shop shop = cacheClient.queryWithLogicalExpire(CACHE_SHOP_KEY, id, Shop.class, this::getById,
+//                20L, TimeUnit.SECONDS);
         if (shop == null) {
             return Result.fail("店铺不存在");
         }
@@ -178,6 +181,7 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
             expireTime = redisData.getExpireTime();
 
             if(expireTime.isAfter(LocalDateTime.now())){
+                unlock(lockKey);
                 return shop;
             }
             CACHE_REBUILD_EXECUTOR.submit(()->{
